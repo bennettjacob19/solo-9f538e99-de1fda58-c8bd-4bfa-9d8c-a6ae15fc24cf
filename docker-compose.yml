@@ -1,0 +1,60 @@
+name: dns-duty
+
+# Three roles share one image and one SQLite state plane on the `dnsdata`
+# volume:
+#   auth     -- local authoritative endpoint for the fixed domain (UDP 5354)
+#   resolver -- caching/serve-stale UDP resolver (UDP 5353, published)
+#   web      -- FastAPI operations console (HTTP 8000, published)
+
+services:
+  auth:
+    build: .
+    command: ["python", "-m", "app.auth_server"]
+    environment:
+      DB_PATH: /data/app.db
+      FIXED_DOMAIN: service.example
+      AUTH_PORT: "5354"
+    volumes:
+      - dnsdata:/data
+    restart: unless-stopped
+
+  resolver:
+    build: .
+    command: ["python", "-m", "app.resolver"]
+    environment:
+      DB_PATH: /data/app.db
+      FIXED_DOMAIN: service.example
+      RESOLVER_PORT: "5353"
+      AUTH_HOST: auth
+      AUTH_PORT: "5354"
+      FRESH_TTL: "5"        # successful answers are fresh for 5s
+      STALE_WINDOW: "20"    # stale A usable at most 20s past expiry
+      UPSTREAM_TIMEOUT: "2" # seconds waiting for the authoritative endpoint
+    ports:
+      - "5353:5353/udp"
+    volumes:
+      - dnsdata:/data
+    depends_on:
+      - auth
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: ["python", "-m", "app.web"]
+    environment:
+      DB_PATH: /data/app.db
+      FIXED_DOMAIN: service.example
+      WEB_PORT: "8000"
+      RESOLVER_HOST: resolver
+      RESOLVER_PORT: "5353"
+    ports:
+      - "8000:8000"
+    volumes:
+      - dnsdata:/data
+    depends_on:
+      - resolver
+      - auth
+    restart: unless-stopped
+
+volumes:
+  dnsdata:
